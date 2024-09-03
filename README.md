@@ -1,6 +1,8 @@
 
 # FlowGrid
 
+[![PyPI version](https://badge.fury.io/py/py-flowgrid.svg)](https://badge.fury.io/py/py-flowgrid) [![Downloads](https://static.pepy.tech/badge/py-flowgrid)](https://pepy.tech/project/py-flowgrid) [![Downloads Month](https://static.pepy.tech/badge/py-flowgrid/month)](https://pepy.tech/project/py-flowgrid)
+
 **FlowGrid** is a Python library designed to improve parallelization across multiple machines with a powerful and user-friendly interface, allowing you to focus on your application logic without worrying about the complexities of task distribution and management.
 
 ## Motivation
@@ -17,7 +19,7 @@ While other solutions like **Celery** (which FlowGrid uses under the hood) are a
 
 > **Note:** FlowGrid will soon be available on PyPI. You will be able to install it using pip:
 > ```bash
-> pip install flowgrid
+> pip install py-flowgrid
 > ```
 > FlowGrid requires Python 3.7 or higher.
 
