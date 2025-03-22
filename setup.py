@@ -9,10 +9,10 @@ if __name__ == '__main__':
         requirements = f.read().split('\n')
 
     setup(
-        name='flowgrid',
+        name='py-flowgrid',
         version=__version__,
         license='MIT',
-        description='Flowgrid is a simple task queue for Python',
+        description='Flowgrid is a simple and powerful task queue for Python',
         long_description=long_description,
         long_description_content_type='text/markdown',
         author='Fernando Pérez',
