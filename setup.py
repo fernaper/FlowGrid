@@ -12,7 +12,7 @@ if __name__ == '__main__':
         name='py-flowgrid',
         version=__version__,
         license='MIT',
-        description='Flowgrid is a simple and powerful task queue for Python',
+        description='A simplified, powerful interface for distributed task management in Python, built on Celery.',  # noqa E501
         long_description=long_description,
         long_description_content_type='text/markdown',
         author='Fernando Pérez',
