@@ -1,9 +1,19 @@
 import uuid
+import asyncio
+
+from functools import wraps
+from typing import (
+    Callable,
+    Coroutine,
+    Dict,
+    List,
+    Optional,
+    TYPE_CHECKING,
+    Union,
+)
 
 from celery import Celery, Task as CeleryTask, group
 from celery.result import GroupResult
-from functools import wraps
-from typing import Callable, Dict, List, Optional, TYPE_CHECKING, Union
 
 from .celery_app import make_celery
 
@@ -70,7 +80,7 @@ class Task():
         Get the Celery signature of the task.
 
         Returns:
-            Celery.Signature: The Celery signature of the task.
+            Celery.signature: The Celery signature of the task.
         '''
         return self.celery_task.s(*self._args, **self._kwargs)
 
@@ -274,12 +284,12 @@ class TaskGroup():
             for task in self.group_result.results
         ]
 
-    def add(self, task_signature: Celery.Signature) -> None:
+    def add(self, task_signature: Celery.signature) -> None:
         '''
         Add a task to the group.
 
         Args:
-            task_signature (Celery.Signature): The signature of the task to be
+            task_signature (Celery.signature): The signature of the task to be
                 added.
         '''
         self._group_tasks.append(task_signature)
@@ -376,27 +386,26 @@ class FlowGrid():
         self.celery_app: Celery = celery_app
         self._group_tasks = None
 
-    def task(self, func: Callable) -> Callable[..., Task]:
+    def task(self, func: Union[Callable, Coroutine]) -> Callable[..., Task]:
         '''
             Decorator for creating a task.
 
             Args:
-                func (Callable): The function to be decorated.
+                func (Union[Callable, Coroutine]): The function to be
+                    decorated.
 
             Returns:
                 Callable[..., Task]: The decorated function.
         '''
 
         fg = self
+        is_async = asyncio.iscoroutinefunction(func)
 
         class ManagedCeleryTask(CeleryTask):
             '''
             Inherits from CeleryTask to add custom behavior to tasks.
 
             This class provides an abstraction layer over Celery's Task class,
-
-            Attributes:
-                __inner_func (Callable): The function to be executed.
 
             Args:
                 *args (Any): Arguments to be passed to the task.
@@ -463,6 +472,9 @@ class FlowGrid():
                 *args (Any): Arguments to be passed to the task.
                 **kwargs (Any): Keyword arguments to be passed to the task.
             '''
+            if is_async:
+                # Use asyncio.run for async functions
+                return asyncio.run(func(*args, **kwargs))
             return func(*args, **kwargs)
 
         task_name = func.__name__
