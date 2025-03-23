@@ -217,9 +217,27 @@ if __name__ == '__main__':
     main()
 ```
 
+## Configuration
+
+You can configure FlowGrid by setting environment variables. Here are all keys and their default values:
+
+- FLOWGRID_CELERY_BROKER_URL=amqp://guest:guest@localhost:5672//
+- FLOWGRID_CELERY_RESULT_BACKEND=redis://localhost:6380/0
+- FLOWGRID_SERIALIZER=json
+- FLOWGRID_TASK_SERIALIZER=json
+- FLOWGRID_RESULT_SERIALIZER=json
+- FLOWGRID_ACCEPT_CONTENT=json
+- FLOWGRID_TIMEZONE=UTC
+- FLOWGRID_ENABLE_UTC=True
+
+
+Serializer, task serializer, result serializer, and accept content can be set to `json`, `pickle` or `msgpac`.
+Serializer is a global setting that will be used for all serializers if not set.
+
+The timezone can be set to any valid timezone. The `FLOWGRID_ENABLE_UTC` variable can be set to `True` or `False` (case-insensitive).
+
 ## Future Enhancements
 
-- **PyPI Release**: Soon, FlowGrid will be available for installation via pip.
 - **Extended Documentation**: More detailed documentation and examples will be added as the project evolves.
 - **Support chaining tasks without waiting**: Currently, you have to wait for a task to finish before chaining another task. You can check the example `examples/06-chaining.py` to see how to chain tasks. With the next solution it will look in the exact same way but if you use `fg.launch` the response will be instant and you can return the task to the user from the beginning.
 - **Support task sequence without relationship**: Right now you can only chain tasks just by including them as paramteres, but what if the response of a task is not needed for the next one. We will create an interface called: `fg.sequence` that will allow you to define a sequence of tasks that will be executed in order.
