@@ -17,6 +17,7 @@ def start_celery_worker(
     app: str,
     concurrency: int,
     loglevel: str,
+    pool: Optional[str] = None,
 ) -> None:
     '''
     Start a Celery worker process.
@@ -49,11 +50,15 @@ def start_celery_worker(
         )
         sys.exit(1)
 
-    fg.celery_app.worker_main([
+    cmd = [
         'worker',
         f'--concurrency={concurrency}',
-        f'--loglevel={loglevel}'
-    ])
+        f'--loglevel={loglevel}',
+    ]
+    if pool:
+        cmd.append(f'--pool={pool}')
+
+    fg.celery_app.worker_main(cmd)
 
 
 def main():
@@ -76,6 +81,12 @@ def main():
         type=int,
         default=2,
         help='Number of concurrent workers'
+    )
+    worker_parser.add_argument(
+        '--pool', '-p',
+        type=str,
+        default=None,
+        help='Worker pool type'
     )
     worker_parser.add_argument(
         '--loglevel', '-l',
@@ -104,6 +115,7 @@ def main():
             args.app,
             args.concurrency,
             args.loglevel,
+            args.pool,
             args.reload,
             args.watch_dir,
         )
@@ -129,12 +141,14 @@ class ReloadableWorker:
         app: str,
         concurrency: int,
         loglevel: str,
+        pool: Optional[str] = None,
         reload: bool = False,
         watch_dirs: Optional[List[str]] = None,
     ):
         self.app = app
         self.concurrency = concurrency
         self.loglevel = loglevel
+        self.pool = pool
         self.reload = reload
         self.watch_dirs = watch_dirs or [os.getcwd()]
         self.worker_process = None
@@ -152,7 +166,10 @@ class ReloadableWorker:
         # Create and start a new worker process
         self.worker_process = multiprocessing.Process(
             target=start_celery_worker,
-            args=(self.app, self.concurrency, self.loglevel)
+            args=(self.app, self.concurrency, self.loglevel),
+            kwargs={
+                'pool': self.pool,
+            },
         )
         self.worker_process.start()
 
@@ -217,6 +234,7 @@ def start_worker(
     app: str,
     concurrency: int,
     loglevel: str,
+    pool: Optional[str] = None,
     reload: bool = False,
     watch_dirs: Optional[List[str]] = None
 ) -> None:
@@ -230,7 +248,14 @@ def start_worker(
         reload: Enable auto-reload when Python files change
         watch_dirs: Additional directories to watch for changes
     '''
-    worker = ReloadableWorker(app, concurrency, loglevel, reload, watch_dirs)
+    worker = ReloadableWorker(
+        app,
+        concurrency,
+        loglevel,
+        pool,
+        reload,
+        watch_dirs,
+    )
     worker.run()
 
 
