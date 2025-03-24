@@ -123,12 +123,12 @@ class Config:
         # Validate Celery config
         if self.celery_config['task_serializer'] not in VALID_SERIALIZERS:
             raise ValueError(
-                f'Invalid task serializer: {self.celery_config['task_serializer']}'  # noqa E501
+                f'Invalid task serializer: {self.celery_config["task_serializer"]}'  # noqa E501
             )
 
         if self.celery_config['result_serializer'] not in VALID_SERIALIZERS:
             raise ValueError(
-                f'Invalid result serializer: {self.celery_config['result_serializer']}'  # noqa E501
+                f'Invalid result serializer: {self.celery_config["result_serializer"]}'  # noqa E501
             )
 
         # Validate accept_content
@@ -137,7 +137,7 @@ class Config:
             for content in self.celery_config['accept_content']
         ):
             raise ValueError(
-                f'Invalid accept_content: {self.celery_config['accept_content']}'  # noqa E501
+                f'Invalid accept_content: {self.celery_config["accept_content"]}'  # noqa E501
             )
 
     @classmethod
