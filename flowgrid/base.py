@@ -506,7 +506,11 @@ class FlowGrid():
 
         return wrapper
 
-    def launch(self, task: Union[Task, TaskGroup]) -> Union[Task, TaskGroup]:
+    def launch(
+        self,
+        task: Union[Task, TaskGroup],
+        timeout: Optional[float] = None,
+    ) -> Union[Task, TaskGroup]:
         '''
         Launch a task. Proxy method to Task.launch() and TaskGroup.launch().
         It is a convenience method to avoid having to check the type of the
@@ -518,7 +522,9 @@ class FlowGrid():
         Returns:
             Union[Task, TaskGroup]: The task(s) instance(s).
         '''
-        return task.launch()
+        if isinstance(task, Task):
+            return task.launch(timeout=timeout)
+        return task.launch()  # TODO: TaskGroup should also support timeout
 
     def revoke(
         self,
@@ -574,6 +580,8 @@ class FlowGrid():
         revoked = i.revoked()
         if revoked is not None:
             for tasks in revoked.values():
+                if task is None:
+                    continue
                 if task.request.id in tasks:
                     return True
 
