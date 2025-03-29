@@ -13,7 +13,7 @@ from typing import (
 )
 
 from celery import Celery, Task as CeleryTask, group
-from celery.result import GroupResult
+from celery.result import AsyncResult, GroupResult
 
 from .celery_app import make_celery
 
@@ -39,25 +39,29 @@ class Task():
         _kwargs (Optional[dict]): Keyword arguments to be passed to the task.
         launched (bool): Indicates whether the task has been launched.
         value (Any): The result of the task after completion.
-        celery_task (Union[Celery.AsyncResult, 'Proxy']): The underlying
+        celery_task (Union[AsyncResult, 'Proxy']): The underlying
             Celery task.
+        result_backend (Optional[str]): The result backend of the task. Must be
+            the same as the Celery application's result backend.
     '''
 
     def __init__(
         self,
-        celery_task: Celery.AsyncResult,
+        celery_task: AsyncResult,
+        result_backend: Optional[str] = None,
     ):
         '''
         Initialize a Task instance.
 
         Args:
-            celery_task (Celery.AsyncResult): The Celery task to be managed.
+            celery_task (AsyncResult): The Celery task to be managed.
         '''
         self._args = None
         self._kwargs = None
         self.launched = False
         self.value = None
-        self.celery_task: Union[Celery.AsyncResult, 'Proxy'] = celery_task
+        self.celery_task: Union[AsyncResult, 'Proxy'] = celery_task
+        self.result_backend = result_backend
 
         try:
             self.launched = self.celery_task.id is not None
@@ -72,6 +76,13 @@ class Task():
     @property
     def status(self) -> str:
         if self.launched:
+            if self.result_backend is not None and \
+               self.result_backend.startswith('redis://') and \
+               redis is not None:
+                redis_conn = redis.Redis.from_url(self.result_backend)
+                value = redis_conn.get(f'flowgrid-revoked-{self.task_id}')
+                if value is not None:
+                    return 'REVOKED'
             return self.celery_task.status
         return 'NOT LAUNCHED'
 
@@ -202,11 +213,18 @@ class TaskGroup():
         launched (bool): Indicates whether the group of tasks has been
             launched.
         value (Any): The result of the group of tasks after completion.
+        result_backend (Optional[str]): The result backend of the group of
+            tasks. Must be the same as the Celery application's result backend.
     '''
 
-    def __init__(self, group_result: Optional[GroupResult] = None):
+    def __init__(
+        self,
+        group_result: Optional[GroupResult] = None,
+        result_backend: Optional[str] = None,
+    ):
         self._group_tasks = []
         self.group_result = group_result
+        self.result_backend = result_backend
         self.launched = False
         self.value = None
 
@@ -266,7 +284,7 @@ class TaskGroup():
         if not self.group_result or not self.group_result.results:
             return []
         return [
-            Task(task)
+            Task(task, result_backend=self.result_backend)
             for task in self.group_result.results
         ]
 
@@ -497,7 +515,10 @@ class FlowGrid():
                 current_task.subtask = celery_task
 
             # task = celery_task.apply_async(args, kwargs)
-            task = Task(celery_task)
+            task = Task(
+                celery_task,
+                result_backend=self.celery_app.conf.result_backend,
+            )
 
             # TODO: This None will be the chord configuration
             task.prepare(None, *args, **kwargs)
@@ -564,25 +585,36 @@ class FlowGrid():
         Args:
             task (Optional[Union[str, Task]]): The task to be checked. Defaults
                 to None, in which case the current task is checked.
-                Can only be none in worker context.
+                If launched without parameter outside worker context, it will
+                return False.
 
         Returns:
             bool: Whether the task has been revoked.
         '''
+        task_id = None
         if task is None:
             task = self.celery_app.current_task
         elif isinstance(task, str):
-            task = self.get_task(task)
-        if isinstance(task, Task):
+            task_id = task
+        elif isinstance(task, Task):
             task = task.celery_task
+
+        if task_id is None and task is not None:
+            if isinstance(task, AsyncResult):
+                task_id = task.id
+            else:
+                task_id = task.request.id
+
+        if task_id is None:
+            # Avoid raising an error if executing in a
+            # non-worker/non-producer context
+            return False
 
         i = self.celery_app.control.inspect()
         revoked = i.revoked()
-        if revoked is not None:
+        if revoked is not None and task_id is not None:
             for tasks in revoked.values():
-                if task is None:
-                    continue
-                if task.request.id in tasks:
+                if task_id in tasks:
                     return True
 
         backend = self.celery_app.conf.result_backend
@@ -590,7 +622,7 @@ class FlowGrid():
             if redis is None:
                 raise ImportError('Redis is not installed')
             redis_conn = redis.Redis.from_url(backend)
-            value = redis_conn.get(f'flowgrid-revoked-{task.request.id}')
+            value = redis_conn.get(f'flowgrid-revoked-{task_id}')
             return value is not None
 
         return False
@@ -633,7 +665,8 @@ class FlowGrid():
             Task: The task instance.
         '''
         return Task(
-            self.celery_app.AsyncResult(task_id)
+            self.celery_app.AsyncResult(task_id),
+            result_backend=self.celery_app.conf.result_backend,
         )
 
     def group(
