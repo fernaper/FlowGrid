@@ -1,5 +1,6 @@
-import uuid
 import asyncio
+import json
+import uuid
 
 from functools import wraps
 from typing import (
@@ -86,6 +87,17 @@ class Task():
             return self.celery_task.status
         return 'NOT LAUNCHED'
 
+    @property
+    def metadata(self) -> Dict:
+        if self.result_backend is not None and \
+           self.result_backend.startswith('redis://') and \
+           redis is not None:
+            redis_conn = redis.Redis.from_url(self.result_backend)
+            response = redis_conn.get(f'flowgrid-metadata-{self.task_id}')
+            if response is not None:
+                return json.loads(response)
+        return {}
+
     def get_signature(self):
         '''
         Get the Celery signature of the task.
@@ -110,7 +122,11 @@ class Task():
         self._kwargs = kwargs
         return self
 
-    def launch(self, timeout: Optional[float] = None) -> 'Task':
+    def launch(
+        self,
+        timeout: Optional[float] = None,
+        metadata: Optional[Dict] = None,
+    ) -> 'Task':
         '''
         Launch the task. This is the most important method of the class, as it
         triggers the execution of the task.
@@ -118,6 +134,10 @@ class Task():
         Args:
             timeout (Optional[float]): The maximum time to wait for the task to
                 complete.
+            metadata (Optional[Dict]): Metadata to be stored in Redis
+                    during the task execution. Defaults to None.
+                    It will be ignored if the result backend is not Redis.
+                    It must be JSON serializable.
 
         Returns:
             Task: The Task instance
@@ -129,6 +149,7 @@ class Task():
         if self.launched:
             return self
 
+        # Manage dependencies (other flowgrid tasks)
         position_to_dependant_task = {}
         args = list(self._args)
         for i, arg in enumerate(self._args):
@@ -147,6 +168,7 @@ class Task():
             else:
                 position_to_dependant_task[key] = arg
 
+        # If there are dependencies, launch and wait for them in parallel
         if position_to_dependant_task:
             dependant_tasks = list(position_to_dependant_task.values())
 
@@ -167,10 +189,25 @@ class Task():
                 else:
                     self._kwargs[k] = response
 
+        # Actually launch the task
         self.celery_task = self.celery_task.apply_async(
             args,
             self._kwargs,
         )
+
+        if metadata is not None and isinstance(metadata, dict):
+            backend = self.result_backend
+            if backend is not None and backend.startswith('redis://'):
+                if redis is None:
+                    raise ImportError('Redis is not installed')
+                redis_conn = redis.Redis.from_url(backend)
+                task_id = self.celery_task.id
+                redis_conn.set(
+                    f'flowgrid-metadata-{task_id}',
+                    json.dumps(metadata),
+                    ex=3600,
+                )
+
         self.launched = True
         # Just to save RAM
         self._args = None
@@ -268,9 +305,18 @@ class TaskGroup():
     @property
     def status(self) -> Dict[str, str]:
         if not self.group_result or not self.group_result.results:
-            return []
+            return {}
         return {
             task.id: task.status
+            for task in self.group_result.results
+        }
+
+    @property
+    def metadata(self) -> Dict[str, Dict]:
+        if not self.group_result or not self.group_result.results:
+            return {}
+        return {
+            task.id: task.metadata
             for task in self.group_result.results
         }
 
@@ -531,6 +577,7 @@ class FlowGrid():
         self,
         task: Union[Task, TaskGroup],
         timeout: Optional[float] = None,
+        metadata: Optional[Dict] = None,
     ) -> Union[Task, TaskGroup]:
         '''
         Launch a task. Proxy method to Task.launch() and TaskGroup.launch().
@@ -539,13 +586,20 @@ class FlowGrid():
 
         Args:
             task (Union[Task, TaskGroup]): The task(s) to be launched.
+            timeout (Optional[float]): The maximum time to wait for the task(s)
+                to complete.
+            metadata (Optional[Dict]): Metadata to be stored in Redis
+                during the task execution. Defaults to None.
+                It will be ignored if the result backend is not Redis.
+                It must be JSON serializable.
 
         Returns:
             Union[Task, TaskGroup]: The task(s) instance(s).
         '''
         if isinstance(task, Task):
-            return task.launch(timeout=timeout)
-        return task.launch()  # TODO: TaskGroup should also support timeout
+            return task.launch(timeout=timeout, metadata=metadata)
+        # TODO: TaskGroup should also support timeout and metadata
+        return task.launch()
 
     def revoke(
         self,
@@ -654,7 +708,7 @@ class FlowGrid():
             # print(f'ALL ABOUR T: {t}; t.state: {t.state}')
             task.update_state(state='PROGRESS', meta=kwargs)
 
-    def get_task(self, task_id: str) -> Task:
+    def get_task(self, task_id: Optional[str] = None) -> Optional[Task]:
         '''
         Get a task by its id.
 
@@ -664,6 +718,15 @@ class FlowGrid():
         Returns:
             Task: The task instance.
         '''
+        if task_id is None:
+            task = self.celery_app.current_task
+            if task is None:
+                return
+            if isinstance(task, AsyncResult):
+                task_id = task.id
+            else:
+                task_id = task.request.id
+
         return Task(
             self.celery_app.AsyncResult(task_id),
             result_backend=self.celery_app.conf.result_backend,
