@@ -58,6 +58,9 @@ def start_celery_worker(
     if pool:
         cmd.append(f'--pool={pool}')
 
+    if fg.queue:
+        cmd.append(f'-Q{fg.queue}')
+
     fg.celery_app.worker_main(cmd)
 
 

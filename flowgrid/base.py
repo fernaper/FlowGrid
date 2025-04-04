@@ -44,12 +44,15 @@ class Task():
             Celery task.
         result_backend (Optional[str]): The result backend of the task. Must be
             the same as the Celery application's result backend.
+        prefix (Optional[str]): A prefix to be used for Redis keys.
+            If not provided, it will be empty.
     '''
 
     def __init__(
         self,
         celery_task: AsyncResult,
         result_backend: Optional[str] = None,
+        prefix: Optional[str] = None,
     ):
         '''
         Initialize a Task instance.
@@ -63,6 +66,9 @@ class Task():
         self.value = None
         self.celery_task: Union[AsyncResult, 'Proxy'] = celery_task
         self.result_backend = result_backend
+        if prefix is not None and prefix.endswith(':'):
+            prefix = prefix[:-1]
+        self.prefix = f'{prefix}:' if prefix else ''
 
         try:
             self.launched = self.celery_task.id is not None
@@ -81,7 +87,9 @@ class Task():
                self.result_backend.startswith('redis://') and \
                redis is not None:
                 redis_conn = redis.Redis.from_url(self.result_backend)
-                value = redis_conn.get(f'flowgrid-revoked-{self.task_id}')
+                value = redis_conn.get(
+                    f'{self.prefix}flowgrid:revoked:{self.task_id}'
+                )
                 if value is not None:
                     return 'REVOKED'
             return self.celery_task.status
@@ -93,7 +101,9 @@ class Task():
            self.result_backend.startswith('redis://') and \
            redis is not None:
             redis_conn = redis.Redis.from_url(self.result_backend)
-            response = redis_conn.get(f'flowgrid-metadata-{self.task_id}')
+            response = redis_conn.get(
+                f'{self.prefix}flowgrid:metadata:{self.task_id}'
+            )
             if response is not None:
                 return json.loads(response)
         return {}
@@ -172,7 +182,10 @@ class Task():
         if position_to_dependant_task:
             dependant_tasks = list(position_to_dependant_task.values())
 
-            task_group = TaskGroup()
+            task_group = TaskGroup(
+                result_backend=self.result_backend,
+                prefix=self.prefix,
+            )
             for dependant_task in dependant_tasks:
                 task_group.add(dependant_task.get_signature())
             responses = task_group.gather(
@@ -203,7 +216,7 @@ class Task():
                 redis_conn = redis.Redis.from_url(backend)
                 task_id = self.celery_task.id
                 redis_conn.set(
-                    f'flowgrid-metadata-{task_id}',
+                    f'{self.prefix}flowgrid:metadata:{task_id}',
                     json.dumps(metadata),
                     ex=3600,
                 )
@@ -252,16 +265,21 @@ class TaskGroup():
         value (Any): The result of the group of tasks after completion.
         result_backend (Optional[str]): The result backend of the group of
             tasks. Must be the same as the Celery application's result backend.
+        prefix (Optional[str]): A prefix to be used for Redis keys.
     '''
 
     def __init__(
         self,
         group_result: Optional[GroupResult] = None,
         result_backend: Optional[str] = None,
+        prefix: Optional[str] = None,
     ):
         self._group_tasks = []
         self.group_result = group_result
         self.result_backend = result_backend
+        if prefix is not None and prefix.endswith(':'):
+            prefix = prefix[:-1]
+        self.prefix = f'{prefix}:' if prefix else ''
         self.launched = False
         self.value = None
 
@@ -270,6 +288,8 @@ class TaskGroup():
         cls,
         tasks: List[Union[Task, 'TaskGroup']],
         group_id: Optional[str] = None,
+        result_backend: Optional[str] = None,
+        prefix: Optional[str] = None,
     ) -> 'TaskGroup':
         '''
         Launch a group of tasks.
@@ -296,7 +316,7 @@ class TaskGroup():
             id=str(uuid.uuid4()) if group_id is None else group_id,
             results=results,
         )
-        return cls(group_result)
+        return cls(group_result, result_backend=result_backend, prefix=prefix)
 
     @property
     def group_id(self) -> str:
@@ -330,7 +350,7 @@ class TaskGroup():
         if not self.group_result or not self.group_result.results:
             return []
         return [
-            Task(task, result_backend=self.result_backend)
+            Task(task, result_backend=self.result_backend, prefix=self.prefix)
             for task in self.group_result.results
         ]
 
@@ -439,15 +459,29 @@ class FlowGrid():
 
     Args:
         celery_app (Optional[Celery]): The Celery application to be used.
+            If not provided, a new Celery application will be created.
+        queue (Optional[str]): The name of the queue to be used. If not
+            provided, the default queue will be used.
+        prefix (Optional[str]): A prefix to be used for Redis keys.
+            If not provided, it will use the queue name as prefix if
+            provided. If not, it will be empty.
+            It is used to avoid collisions with other FlowGrid instances
+            using the same Redis instance.
     '''
 
     def __init__(
         self,
         celery_app: Optional[Celery] = None,
+        queue: Optional[str] = None,
+        prefix: Optional[str] = None,
     ):
         if celery_app is None:
             celery_app = make_celery()
         self.celery_app: Celery = celery_app
+        self.queue = queue
+        if prefix is None and queue is not None:
+            prefix = queue
+        self.prefix = f'{prefix}:' if prefix else ''
         self._group_tasks = None
 
     def task(self, func: Union[Callable, Coroutine]) -> Callable[..., Task]:
@@ -542,9 +576,16 @@ class FlowGrid():
             return func(*args, **kwargs)
 
         task_name = func.__name__
+
+        task_kwargs = {}
+        if self.queue is not None:
+            task_kwargs['queue'] = self.queue
+            task_kwargs['routing_key'] = self.queue
+
         celery_task = self.celery_app.task(
             name=task_name,
             base=ManagedCeleryTask,
+            **task_kwargs,
         )(__inner_func)
 
         @wraps(func)
@@ -563,7 +604,7 @@ class FlowGrid():
             # task = celery_task.apply_async(args, kwargs)
             task = Task(
                 celery_task,
-                result_backend=self.celery_app.conf.result_backend,
+                prefix=self.prefix,
             )
 
             # TODO: This None will be the chord configuration
@@ -630,7 +671,11 @@ class FlowGrid():
             if redis is None:
                 raise ImportError('Redis is not installed')
             redis_conn = redis.Redis.from_url(backend)
-            redis_conn.set(f'flowgrid-revoked-{task.task_id}', '1',  ex=3600)
+            redis_conn.set(
+                f'{self.prefix}flowgrid:revoked:{task.task_id}',
+                '1',
+                ex=3600,
+            )
 
     def is_revoked(self, task: Optional[Union[str, Task]] = None) -> bool:
         '''
@@ -676,7 +721,9 @@ class FlowGrid():
             if redis is None:
                 raise ImportError('Redis is not installed')
             redis_conn = redis.Redis.from_url(backend)
-            value = redis_conn.get(f'flowgrid-revoked-{task_id}')
+            value = redis_conn.get(
+                f'{self.prefix}flowgrid:revoked:{task_id}'
+            )
             return value is not None
 
         return False
@@ -730,6 +777,7 @@ class FlowGrid():
         return Task(
             self.celery_app.AsyncResult(task_id),
             result_backend=self.celery_app.conf.result_backend,
+            prefix=self.prefix,
         )
 
     def group(
@@ -745,7 +793,10 @@ class FlowGrid():
         Returns:
             TaskGroup: The task group instance.
         '''
-        task_group = TaskGroup()
+        task_group = TaskGroup(
+            result_backend=self.celery_app.conf.result_backend,
+            prefix=self.prefix,
+        )
         for task in tasks:
             task_group.add(task.get_signature())
         return task_group
@@ -787,6 +838,9 @@ class FlowGrid():
             elif isinstance(task, TaskGroup):
                 return task.gather(timeout=timeout)
 
-        return TaskGroup.launch_from_list(parsed_tasks).gather(
+        return TaskGroup.launch_from_list(
+            parsed_tasks,
+            prefix=self.prefix,
+        ).gather(
             timeout=timeout,
         )
