@@ -4,12 +4,15 @@ import uuid
 
 from functools import wraps
 from typing import (
+    Any,
     Callable,
     Coroutine,
     Dict,
     List,
     Optional,
+    ParamSpec,
     TYPE_CHECKING,
+    TypeVar,
     Union,
 )
 
@@ -25,6 +28,9 @@ except ImportError:
 
 if TYPE_CHECKING:
     from celery.local import Proxy
+
+P = ParamSpec('P')
+R = TypeVar('R')
 
 
 class Task():
@@ -484,13 +490,21 @@ class FlowGrid():
         self.prefix = f'{prefix}:' if prefix else ''
         self._group_tasks = None
 
-    def task(self, func: Union[Callable, Coroutine]) -> Callable[..., Task]:
+    def task(
+        self,
+        func: Union[
+            Callable[P, R],
+            Callable[P, Coroutine[Any, Any, R]],
+        ],
+    ) -> Callable[P, Task]:
         '''
             Decorator for creating a task.
 
             Args:
-                func (Union[Callable, Coroutine]): The function to be
-                    decorated.
+                func (Union[
+                    Callable[P, R],
+                    Callable[P, Coroutine[Any, Any, R]],
+                ]): The function to be decorated.
 
             Returns:
                 Callable[..., Task]: The decorated function.
@@ -589,7 +603,7 @@ class FlowGrid():
         )(__inner_func)
 
         @wraps(func)
-        def wrapper(*args, **kwargs) -> Optional[Task]:
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> Optional[Task]:
             '''
             Wrapper function (decorator) for the task.
 
