@@ -114,6 +114,30 @@ class Task():
                 return json.loads(response)
         return {}
 
+    def update_metadata(self, new_metadata: Dict) -> None:
+        '''
+        Update the metadata of the task.
+
+        Args:
+            new_metadata (Dict): The new metadata to be merged with the
+                existing metadata. It must be JSON serializable.
+        '''
+        if (
+            isinstance(new_metadata, dict) and
+            self.result_backend is not None and
+            self.result_backend.startswith('redis://') and
+            redis is not None
+        ):
+            redis_conn = redis.Redis.from_url(self.result_backend)
+            task_id = self.celery_task.id
+            existing_metadata = self.metadata
+            existing_metadata.update(new_metadata)
+            redis_conn.set(
+                f'{self.prefix}flowgrid:metadata:{task_id}',
+                json.dumps(existing_metadata),
+                ex=3600,
+            )
+
     def get_signature(self):
         '''
         Get the Celery signature of the task.
@@ -744,7 +768,7 @@ class FlowGrid():
 
     def update(self, *_, **kwargs):
         '''
-        Update the task state. It supports metadate to indicate progress.
+        Update the task state. It supports metadata to indicate progress.
         Can only be used inside worker context.
 
         Example:
