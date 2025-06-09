@@ -787,7 +787,7 @@ class FlowGrid():
             **kwargs (Any): Keyword arguments to be passed to the task.
         '''
         task = self.celery_app.current_task
-        print(f'TASK: ({task}) Type: {type(task)}')
+        # print(f'TASK: ({task}) Type: {type(task)}')
         if task is not None:
             # t = self.celery_app.AsyncResult(task.request.id)
             # print(f'ALL ABOUR T: {t}; t.state: {t.state}')
