@@ -2,6 +2,7 @@ import asyncio
 import json
 import uuid
 
+from datetime import datetime
 from functools import wraps
 from typing import (
     Any,
@@ -33,8 +34,8 @@ P = ParamSpec('P')
 R = TypeVar('R')
 
 
-class Task():
-    '''
+class Task:
+    """
     Represents a Celery task with additional management capabilities.
 
     This class provides an abstraction layer over Celery's AsyncResult,
@@ -52,25 +53,29 @@ class Task():
             the same as the Celery application's result backend.
         prefix (Optional[str]): A prefix to be used for Redis keys.
             If not provided, it will be empty.
-    '''
+    """
 
     def __init__(
         self,
         celery_task: AsyncResult,
+        reliable_celery_task: Optional[AsyncResult] = None,
         result_backend: Optional[str] = None,
         prefix: Optional[str] = None,
     ):
-        '''
+        """
         Initialize a Task instance.
 
         Args:
             celery_task (AsyncResult): The Celery task to be managed.
-        '''
+        """
         self._args = None
         self._kwargs = None
         self.launched = False
         self.value = None
         self.celery_task: Union[AsyncResult, 'Proxy'] = celery_task
+        self.reliable_celery_task: Optional[Union[AsyncResult, 'Proxy']] = (
+            reliable_celery_task
+        )
         self.result_backend = result_backend
         if prefix is not None and prefix.endswith(':'):
             prefix = prefix[:-1]
@@ -89,9 +94,11 @@ class Task():
     @property
     def status(self) -> str:
         if self.launched:
-            if self.result_backend is not None and \
-               self.result_backend.startswith('redis://') and \
-               redis is not None:
+            if (
+                self.result_backend is not None
+                and self.result_backend.startswith('redis://')
+                and redis is not None
+            ):
                 redis_conn = redis.Redis.from_url(self.result_backend)
                 value = redis_conn.get(
                     f'{self.prefix}flowgrid:revoked:{self.task_id}'
@@ -103,9 +110,11 @@ class Task():
 
     @property
     def metadata(self) -> Dict:
-        if self.result_backend is not None and \
-           self.result_backend.startswith('redis://') and \
-           redis is not None:
+        if (
+            self.result_backend is not None
+            and self.result_backend.startswith('redis://')
+            and redis is not None
+        ):
             redis_conn = redis.Redis.from_url(self.result_backend)
             response = redis_conn.get(
                 f'{self.prefix}flowgrid:metadata:{self.task_id}'
@@ -115,18 +124,18 @@ class Task():
         return {}
 
     def update_metadata(self, new_metadata: Dict) -> None:
-        '''
+        """
         Update the metadata of the task.
 
         Args:
             new_metadata (Dict): The new metadata to be merged with the
                 existing metadata. It must be JSON serializable.
-        '''
+        """
         if (
-            isinstance(new_metadata, dict) and
-            self.result_backend is not None and
-            self.result_backend.startswith('redis://') and
-            redis is not None
+            isinstance(new_metadata, dict)
+            and self.result_backend is not None
+            and self.result_backend.startswith('redis://')
+            and redis is not None
         ):
             redis_conn = redis.Redis.from_url(self.result_backend)
             task_id = self.celery_task.id
@@ -139,16 +148,16 @@ class Task():
             )
 
     def get_signature(self):
-        '''
+        """
         Get the Celery signature of the task.
 
         Returns:
             Celery.signature: The Celery signature of the task.
-        '''
+        """
         return self.celery_task.s(*self._args, **self._kwargs)
 
     def prepare(self, *args, **kwargs) -> 'Task':
-        '''
+        """
         Prepare the task for execution
 
         Args:
@@ -157,7 +166,7 @@ class Task():
 
         Returns:
             Task: The Task instance
-        '''
+        """
         self._args = args
         self._kwargs = kwargs
         return self
@@ -166,8 +175,11 @@ class Task():
         self,
         timeout: Optional[float] = None,
         metadata: Optional[Dict] = None,
+        delay: Optional[float] = None,
+        eta: Optional[datetime] = None,
+        reliable: bool = False,
     ) -> 'Task':
-        '''
+        """
         Launch the task. This is the most important method of the class, as it
         triggers the execution of the task.
 
@@ -178,6 +190,13 @@ class Task():
                     during the task execution. Defaults to None.
                     It will be ignored if the result backend is not Redis.
                     It must be JSON serializable.
+            delay (Optional[float]): The delay in seconds before the task is
+                executed. Defaults to None.
+            eta (Optional[datetime]): The estimated time of arrival for the
+                task. Defaults to None.
+            reliable (bool): Whether to use the reliable version of the task
+                (acks_late=True). Defaults to False. If delay or eta are
+                provided, it will default to True.
 
         Returns:
             Task: The Task instance
@@ -185,7 +204,7 @@ class Task():
         Raises:
             TimeoutError: If the task does not complete within the specified
                 timeout.
-        '''
+        """
         if self.launched:
             return self
 
@@ -233,9 +252,18 @@ class Task():
                     self._kwargs[k] = response
 
         # Actually launch the task
-        self.celery_task = self.celery_task.apply_async(
+        # Actually launch the task
+        task_to_launch = self.celery_task
+        if (
+            delay is not None or eta is not None or reliable
+        ) and self.reliable_celery_task is not None:
+            task_to_launch = self.reliable_celery_task
+
+        self.celery_task = task_to_launch.apply_async(
             args,
             self._kwargs,
+            countdown=delay,
+            eta=eta,
         )
 
         if metadata is not None and isinstance(metadata, dict):
@@ -258,7 +286,7 @@ class Task():
         return self
 
     def wait(self, timeout: Optional[float] = None):
-        '''
+        """
         Wait for the task to complete.
 
         Args:
@@ -271,15 +299,15 @@ class Task():
         Raises:
             TimeoutError: If the task does not complete within the specified
                 timeout.
-        '''
+        """
         if not self.launched:
             self.launch(timeout=timeout)
         self.value = self.celery_task.get(timeout=timeout)
         return self.value
 
 
-class TaskGroup():
-    '''
+class TaskGroup:
+    """
     Represents a group of Celery tasks with additional management capabilities.
 
     This class provides an abstraction layer over Celery's GroupResult,
@@ -296,7 +324,7 @@ class TaskGroup():
         result_backend (Optional[str]): The result backend of the group of
             tasks. Must be the same as the Celery application's result backend.
         prefix (Optional[str]): A prefix to be used for Redis keys.
-    '''
+    """
 
     def __init__(
         self,
@@ -321,7 +349,7 @@ class TaskGroup():
         result_backend: Optional[str] = None,
         prefix: Optional[str] = None,
     ) -> 'TaskGroup':
-        '''
+        """
         Launch a group of tasks.
 
         Args:
@@ -330,7 +358,7 @@ class TaskGroup():
 
         Returns:
             TaskGroup: The TaskGroup instance.
-        '''
+        """
         results = []
         for task in tasks:
             if isinstance(task, Task):
@@ -338,10 +366,7 @@ class TaskGroup():
                     task.launch()
                 results.append(task.celery_task)
             elif isinstance(task, TaskGroup):
-                results.extend([
-                    t.celery_task
-                    for t in task.get_tasks()
-                ])
+                results.extend([t.celery_task for t in task.get_tasks()])
         group_result = GroupResult(
             id=str(uuid.uuid4()) if group_id is None else group_id,
             results=results,
@@ -356,27 +381,21 @@ class TaskGroup():
     def status(self) -> Dict[str, str]:
         if not self.group_result or not self.group_result.results:
             return {}
-        return {
-            task.id: task.status
-            for task in self.group_result.results
-        }
+        return {task.id: task.status for task in self.group_result.results}
 
     @property
     def metadata(self) -> Dict[str, Dict]:
         if not self.group_result or not self.group_result.results:
             return {}
-        return {
-            task.id: task.metadata
-            for task in self.group_result.results
-        }
+        return {task.id: task.metadata for task in self.group_result.results}
 
     def get_tasks(self) -> List[Task]:
-        '''
+        """
         Get the tasks in the group.
 
         Returns:
             List[Task]: The tasks in the group.
-        '''
+        """
         if not self.group_result or not self.group_result.results:
             return []
         return [
@@ -385,45 +404,49 @@ class TaskGroup():
         ]
 
     def get_task_ids(self) -> List[str]:
-        '''
+        """
         Get the ids of the tasks in the group.
 
         Returns:
             List[str]: The ids of the tasks in the group.
-        '''
+        """
         if not self.group_result or not self.group_result.results:
             return []
-        return [
-            task.id
-            for task in self.group_result.results
-        ]
+        return [task.id for task in self.group_result.results]
 
     def add(self, task_signature: Celery.signature) -> None:
-        '''
+        """
         Add a task to the group.
 
         Args:
             task_signature (Celery.signature): The signature of the task to be
                 added.
-        '''
+        """
         self._group_tasks.append(task_signature)
 
-    def launch(self) -> 'TaskGroup':
-        '''
+    def launch(
+        self,
+        delay: Optional[float] = None,
+        eta: Optional[datetime] = None,
+    ) -> 'TaskGroup':
+        """
         Launch the group of tasks.
 
         Returns:
             TaskGroup: The TaskGroup instance.
-        '''
+        """
         if self._group_tasks:
-            self.group_result = group(self._group_tasks).apply_async()
+            self.group_result = group(self._group_tasks).apply_async(
+                countdown=delay,
+                eta=eta,
+            )
             self.launched = True
         else:
             self.group_result = None
         return self
 
     def gather(self, timeout: Optional[float] = None):
-        '''
+        """
         Wait for all tasks in the group to complete.
 
         Args:
@@ -432,7 +455,7 @@ class TaskGroup():
 
         Returns:
             List[Any]: The results of the tasks in the group.
-        '''
+        """
         if not self.launched:
             self.launch()
         response = self.group_result.get(timeout=timeout)
@@ -440,8 +463,8 @@ class TaskGroup():
         return response
 
 
-class FlowGrid():
-    '''
+class FlowGrid:
+    """
     Represents a FlowGrid instance, which is responsible for managing tasks.
 
     This class provides an abstraction layer over Celery, allowing for more
@@ -497,7 +520,7 @@ class FlowGrid():
             provided. If not, it will be empty.
             It is used to avoid collisions with other FlowGrid instances
             using the same Redis instance.
-    '''
+    """
 
     def __init__(
         self,
@@ -521,24 +544,24 @@ class FlowGrid():
             Callable[P, Coroutine[Any, Any, R]],
         ],
     ) -> Callable[P, Task]:
-        '''
-            Decorator for creating a task.
+        """
+        Decorator for creating a task.
 
-            Args:
-                func (Union[
-                    Callable[P, R],
-                    Callable[P, Coroutine[Any, Any, R]],
-                ]): The function to be decorated.
+        Args:
+            func (Union[
+                Callable[P, R],
+                Callable[P, Coroutine[Any, Any, R]],
+            ]): The function to be decorated.
 
-            Returns:
-                Callable[..., Task]: The decorated function.
-        '''
+        Returns:
+            Callable[..., Task]: The decorated function.
+        """
 
         fg = self
         is_async = asyncio.iscoroutinefunction(func)
 
         class ManagedCeleryTask(CeleryTask):
-            '''
+            """
             Inherits from CeleryTask to add custom behavior to tasks.
 
             This class provides an abstraction layer over Celery's Task class,
@@ -546,17 +569,17 @@ class FlowGrid():
             Args:
                 *args (Any): Arguments to be passed to the task.
                 **kwargs (Any): Keyword arguments to be passed to the task.
-            '''
+            """
 
             def before_task(self, *args, **kwargs) -> bool:
-                '''
+                """
                 Execute custom behavior before the task is executed.
 
                 Args:
                     *args (Any): Arguments to be passed to the task.
                     **kwargs (Any): Keyword arguments to be passed to the
                         task.
-                '''
+                """
                 # TODO: Add possible Triggers
                 if fg.is_revoked():
                     return True
@@ -565,19 +588,19 @@ class FlowGrid():
                 return False
 
             def after_task(self, *args, **kwargs):
-                '''
+                """
                 Execute custom behavior after the task is executed.
 
                 Args:
                     *args (Any): Arguments to be passed to the task.
                     **kwargs (Any): Keyword arguments to be passed to the
                         task.
-                '''
+                """
                 # TODO: Add possible Callbacks
                 pass
 
             def __call__(self, *args, **kwargs):
-                '''
+                """
                 Execute the task.
 
                 Args:
@@ -587,19 +610,20 @@ class FlowGrid():
 
                 Returns:
                     Any: The result of the task.
-                '''
+                """
                 is_revoked = self.before_task(*args, **kwargs)
                 if is_revoked:
                     print('CANCELLED BEFORE START')
                     return
                 result = super(ManagedCeleryTask, self).__call__(
-                    *args, **kwargs,
+                    *args,
+                    **kwargs,
                 )
                 self.after_task(*args, **kwargs)
                 return result
 
         def __inner_func(config, *args, **kwargs):
-            '''
+            """
             Inner function to be executed by the task.
 
             Args:
@@ -607,7 +631,7 @@ class FlowGrid():
                     have chords.
                 *args (Any): Arguments to be passed to the task.
                 **kwargs (Any): Keyword arguments to be passed to the task.
-            '''
+            """
             if is_async:
                 # Use asyncio.run for async functions
                 return asyncio.run(func(*args, **kwargs))
@@ -623,18 +647,26 @@ class FlowGrid():
         celery_task = self.celery_app.task(
             name=task_name,
             base=ManagedCeleryTask,
+            acks_late=False,
+            **task_kwargs,
+        )(__inner_func)
+
+        reliable_celery_task = self.celery_app.task(
+            name=f'{task_name}.reliable',
+            base=ManagedCeleryTask,
+            acks_late=True,
             **task_kwargs,
         )(__inner_func)
 
         @wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> Optional[Task]:
-            '''
+            """
             Wrapper function (decorator) for the task.
 
             Args:
                 *args (Any): Arguments to be passed to the task.
                 **kwargs (Any): Keyword arguments to be passed to the task.
-            '''
+            """
             current_task = self.celery_app.current_task
             if current_task is not None:
                 current_task.subtask = celery_task
@@ -642,6 +674,7 @@ class FlowGrid():
             # task = celery_task.apply_async(args, kwargs)
             task = Task(
                 celery_task,
+                reliable_celery_task=reliable_celery_task,
                 prefix=self.prefix,
             )
 
@@ -657,8 +690,10 @@ class FlowGrid():
         task: Union[Task, TaskGroup],
         timeout: Optional[float] = None,
         metadata: Optional[Dict] = None,
+        delay: Optional[float] = None,
+        eta: Optional[datetime] = None,
     ) -> Union[Task, TaskGroup]:
-        '''
+        """
         Launch a task. Proxy method to Task.launch() and TaskGroup.launch().
         It is a convenience method to avoid having to check the type of the
         task.
@@ -671,21 +706,30 @@ class FlowGrid():
                 during the task execution. Defaults to None.
                 It will be ignored if the result backend is not Redis.
                 It must be JSON serializable.
+            delay (Optional[float]): The delay in seconds before the task is
+                executed. Defaults to None.
+            eta (Optional[datetime]): The estimated time of arrival for the
+                task. Defaults to None.
 
         Returns:
             Union[Task, TaskGroup]: The task(s) instance(s).
-        '''
+        """
         if isinstance(task, Task):
-            return task.launch(timeout=timeout, metadata=metadata)
-        # TODO: TaskGroup should also support timeout and metadata
-        return task.launch()
+            return task.launch(
+                timeout=timeout,
+                metadata=metadata,
+                delay=delay,
+                eta=eta,
+                reliable=True if (delay or eta) else False,
+            )
+        return task.launch(delay=delay, eta=eta)
 
     def revoke(
         self,
         task: Union[str, Task],
         force: bool = False,
     ) -> None:
-        '''
+        """
         Revoke a task.
 
         Args:
@@ -698,7 +742,7 @@ class FlowGrid():
         Raises:
             ImportError: If the Redis library is not installed and the result
                 backend is a Redis instance.
-        '''
+        """
         if isinstance(task, str):
             task = self.get_task(task)
         if not task.launched:
@@ -716,7 +760,7 @@ class FlowGrid():
             )
 
     def is_revoked(self, task: Optional[Union[str, Task]] = None) -> bool:
-        '''
+        """
         Check if a task has been revoked.
 
         Args:
@@ -727,7 +771,7 @@ class FlowGrid():
 
         Returns:
             bool: Whether the task has been revoked.
-        '''
+        """
         task_id = None
         if task is None:
             task = self.celery_app.current_task
@@ -759,15 +803,13 @@ class FlowGrid():
             if redis is None:
                 raise ImportError('Redis is not installed')
             redis_conn = redis.Redis.from_url(backend)
-            value = redis_conn.get(
-                f'{self.prefix}flowgrid:revoked:{task_id}'
-            )
+            value = redis_conn.get(f'{self.prefix}flowgrid:revoked:{task_id}')
             return value is not None
 
         return False
 
     def update(self, *_, **kwargs):
-        '''
+        """
         Update the task state. It supports metadata to indicate progress.
         Can only be used inside worker context.
 
@@ -785,7 +827,7 @@ class FlowGrid():
         Args:
             *_: Ignored arguments.
             **kwargs (Any): Keyword arguments to be passed to the task.
-        '''
+        """
         task = self.celery_app.current_task
         # print(f'TASK: ({task}) Type: {type(task)}')
         if task is not None:
@@ -794,7 +836,7 @@ class FlowGrid():
             task.update_state(state='PROGRESS', meta=kwargs)
 
     def get_task(self, task_id: Optional[str] = None) -> Optional[Task]:
-        '''
+        """
         Get a task by its id.
 
         Args:
@@ -802,7 +844,7 @@ class FlowGrid():
 
         Returns:
             Task: The task instance.
-        '''
+        """
         if task_id is None:
             task = self.celery_app.current_task
             if task is None:
@@ -822,7 +864,7 @@ class FlowGrid():
         self,
         *tasks: List[Task],
     ) -> TaskGroup:
-        '''
+        """
         Get a task group by its ids.
 
         Args:
@@ -830,7 +872,7 @@ class FlowGrid():
 
         Returns:
             TaskGroup: The task group instance.
-        '''
+        """
         task_group = TaskGroup(
             result_backend=self.celery_app.conf.result_backend,
             prefix=self.prefix,
@@ -844,7 +886,7 @@ class FlowGrid():
         *tasks: Union[str, Task, TaskGroup],
         timeout: Optional[float] = None,
     ):
-        '''
+        """
         Wait for all tasks to finish.
 
         Args:
@@ -858,7 +900,7 @@ class FlowGrid():
         Raises:
             TimeoutError: If the tasks do not complete within the specified
                 timeout.
-        '''
+        """
         parsed_tasks = []
         for task in tasks:
             if isinstance(task, (Task, TaskGroup)):

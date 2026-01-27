@@ -10,9 +10,11 @@ class CeleryConfig(TypedDict):
     enable_utc: bool
 
 
-VALID_SERIALIZERS: List[
-    Literal['json', 'pickle', 'msgpack']
-] = ['json', 'pickle', 'msgpack']
+VALID_SERIALIZERS: List[Literal['json', 'pickle', 'msgpack']] = [
+    'json',
+    'pickle',
+    'msgpack',
+]
 
 
 class Config:
@@ -44,10 +46,11 @@ class Config:
         # Global serializer from environment variable
         global_serializer = next(
             (
-                serializer for serializer in VALID_SERIALIZERS
+                serializer
+                for serializer in VALID_SERIALIZERS
                 if serializer == os.getenv('FLOWGRID_SERIALIZER', '')
             ),
-            ''
+            '',
         )
 
         # Celery Broker URL
@@ -67,32 +70,39 @@ class Config:
             self.celery_config: CeleryConfig = {
                 'task_serializer': next(
                     (
-                        serializer for serializer in VALID_SERIALIZERS
-                        if serializer == os.getenv('FLOWGRID_TASK_SERIALIZER', '')  # noqa E501
+                        serializer
+                        for serializer in VALID_SERIALIZERS
+                        if serializer
+                        == os.getenv('FLOWGRID_TASK_SERIALIZER', '')  # noqa E501
                     ),
-                    global_serializer or 'json'
+                    global_serializer or 'json',
                 ),
                 'result_serializer': next(
                     (
-                        serializer for serializer in VALID_SERIALIZERS
-                        if serializer == os.getenv('FLOWGRID_RESULT_SERIALIZER', '')  # noqa E501
+                        serializer
+                        for serializer in VALID_SERIALIZERS
+                        if serializer
+                        == os.getenv('FLOWGRID_RESULT_SERIALIZER', '')  # noqa E501
                     ),
-                    global_serializer or 'json'
+                    global_serializer or 'json',
                 ),
                 'accept_content': [
                     next(
                         (
-                            serializer for serializer in VALID_SERIALIZERS
-                            if serializer == os.getenv('FLOWGRID_ACCEPT_CONTENT', '')  # noqa E501
+                            serializer
+                            for serializer in VALID_SERIALIZERS
+                            if serializer
+                            == os.getenv('FLOWGRID_ACCEPT_CONTENT', '')  # noqa E501
                         ),
-                        global_serializer or 'json'
+                        global_serializer or 'json',
                     )
                 ],
                 'timezone': os.getenv('FLOWGRID_TIMEZONE', 'UTC'),
                 'enable_utc': os.getenv(
                     'FLOWGRID_ENABLE_UTC',
                     'True',
-                ).lower() == 'true'
+                ).lower()
+                == 'true',
             }
         else:
             self.celery_config = celery_config

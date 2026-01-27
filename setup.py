@@ -1,8 +1,9 @@
 from setuptools import setup, find_packages
+
 try:
     from flowgrid import __version__
 except ImportError:
-    __version__ = '0.3.7'
+    __version__ = '0.3.8'
 
 if __name__ == '__main__':
     with open('README.md', 'r', encoding='utf8') as f:
@@ -23,8 +24,8 @@ if __name__ == '__main__':
         url='https://github.com/fernaper/flowgrid',
         packages=find_packages(),
         install_requires=requirements,
-        entry_points='''
+        entry_points="""
             [console_scripts]
             flowgrid=flowgrid.cli:main
-        ''',
+        """,
     )

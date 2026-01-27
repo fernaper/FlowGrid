@@ -16,9 +16,7 @@ def add(x: float, y: float) -> float:
 def multiply(*values: float, times: int = 10) -> float:
     print('VALUES:', values)
     time.sleep(3)
-    return sum(
-        values
-    ) * times
+    return sum(values) * times
 
 
 def main():

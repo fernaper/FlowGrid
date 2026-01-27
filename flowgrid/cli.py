@@ -19,14 +19,14 @@ def start_celery_worker(
     loglevel: str,
     pool: Optional[str] = None,
 ) -> None:
-    '''
+    """
     Start a Celery worker process.
 
     Args:
         app: FlowGrid app name
         concurrency: Number of concurrent workers
         loglevel: Logging level
-    '''
+    """
     # This is to ensure that lazy import works
     cwd = os.getcwd()
     sys.path.append(cwd)
@@ -69,47 +69,44 @@ def main():
     subparsers = parser.add_subparsers(dest='command')
 
     worker_parser = subparsers.add_parser(
-        'worker',
-        help='Launch a FlowGrid worker'
+        'worker', help='Launch a FlowGrid worker'
     )
 
     worker_parser.add_argument(
-        '--app', '-A',
-        type=str,
-        default=None,
-        help='Flowgrid app name'
+        '--app', '-A', type=str, default=None, help='Flowgrid app name'
     )
     worker_parser.add_argument(
-        '--concurrency', '-c',
+        '--concurrency',
+        '-c',
         type=int,
         default=2,
-        help='Number of concurrent workers'
+        help='Number of concurrent workers',
     )
     worker_parser.add_argument(
-        '--pool', '-p',
-        type=str,
-        default=None,
-        help='Worker pool type'
+        '--pool', '-p', type=str, default=None, help='Worker pool type'
     )
     worker_parser.add_argument(
-        '--loglevel', '-l',
+        '--loglevel',
+        '-l',
         type=str,
         default='info',
-        help='Logging level (info, debug, warning, error).'
+        help='Logging level (info, debug, warning, error).',
     )
     worker_parser.add_argument(
-        '--reload', '-r',
+        '--reload',
+        '-r',
         action='store_true',
-        help='Enable auto-reload when Python files change'
+        help='Enable auto-reload when Python files change',
     )
     worker_parser.add_argument(
-        '--watch-dir', '-w',
+        '--watch-dir',
+        '-w',
         type=str,
         action='append',
         help=(
             'Additional directories to watch for changes '
             '(can be specified multiple times)'
-        )
+        ),
     )
 
     args = parser.parse_args()
@@ -128,7 +125,7 @@ def main():
 
 
 class ReloadableWorker:
-    '''
+    """
     A worker that can be reloaded when Python files change.
 
     Args:
@@ -137,7 +134,7 @@ class ReloadableWorker:
         loglevel: Logging level (info, debug, warning, error)
         reload: Enable auto-reload when Python files change
         watch_dirs: Additional directories to watch for changes
-    '''
+    """
 
     def __init__(
         self,
@@ -158,7 +155,7 @@ class ReloadableWorker:
         self.stop_event = multiprocessing.Event()
 
     def _start_worker(self):
-        '''Start a new worker process.'''
+        """Start a new worker process."""
         # Terminate existing process if it exists
         if self.worker_process and self.worker_process.is_alive():
             self.worker_process.terminate()
@@ -177,7 +174,8 @@ class ReloadableWorker:
         self.worker_process.start()
 
     def _create_file_handler(self):
-        '''Create a file system event handler for detecting changes.'''
+        """Create a file system event handler for detecting changes."""
+
         class ReloadHandler(FileSystemEventHandler):
             def __init__(self, stop_event):
                 self.stop_event = stop_event
@@ -193,7 +191,7 @@ class ReloadableWorker:
         return ReloadHandler(self.stop_event)
 
     def run(self):
-        '''Run the worker, with optional file watching and reloading.'''
+        """Run the worker, with optional file watching and reloading."""
         if not self.reload:
             # If reload is not enabled, just run the worker once
             # In current process
@@ -239,9 +237,9 @@ def start_worker(
     loglevel: str,
     pool: Optional[str] = None,
     reload: bool = False,
-    watch_dirs: Optional[List[str]] = None
+    watch_dirs: Optional[List[str]] = None,
 ) -> None:
-    '''
+    """
     Start a FlowGrid worker.
 
     Args:
@@ -250,7 +248,7 @@ def start_worker(
         loglevel: Logging level (info, debug, warning, error)
         reload: Enable auto-reload when Python files change
         watch_dirs: Additional directories to watch for changes
-    '''
+    """
     worker = ReloadableWorker(
         app,
         concurrency,

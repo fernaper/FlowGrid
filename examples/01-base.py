@@ -21,10 +21,9 @@ def main():
 
     # You can explicitly launch the task or let the
     # wait function do it for you
-    task = fg.launch(task, metadata={
-        'name': 'Addition',
-        'description': 'Add two numbers'
-    })  # Can be uncommented
+    task = fg.launch(
+        task, metadata={'name': 'Addition', 'description': 'Add two numbers'}
+    )  # Can be uncommented
 
     print('Task metadata:', task.metadata)
 

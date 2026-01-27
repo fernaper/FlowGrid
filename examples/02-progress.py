@@ -9,7 +9,7 @@ def add_multiple(x: float, y: float, times: int = 10) -> float:
     response = x
     for i in range(times):
         time.sleep(1)
-        fg.update(progress=i, total=times, percent=100*i/times)
+        fg.update(progress=i, total=times, percent=100 * i / times)
         response += y
     return response
 
